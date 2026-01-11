@@ -20,6 +20,8 @@ class TrafficFlowAnalyzer:
     def __init__(self, config_path="config.yaml"):
 
         self.config=self._load_config(config_path)
+        # 哨兵值（用于替换原来的 NaN 或异常值）
+        self.nan_sentinel = self.config.get('processing', {}).get('nan_sentinel', -1)
         self.device=self._setup_device()
         self.ais_data=None
         self.ship_info=None
@@ -95,18 +97,22 @@ class TrafficFlowAnalyzer:
         for col_idx in range(nps.shape[1]):
             col_data = nps[:, col_idx]
             
-            # 转换为float64以便处理
+            # 转换为数字（保留为 Series 以便后续处理）
             try:
-                col_data = pd.to_numeric(col_data, errors='coerce').values  # 强制转换为数字，错误值变NaN
+                # pd.to_numeric 在输入 numpy 数组时会返回 ndarray；强制包装为 pd.Series 以确保有 fillna/mask 方法
+                col_series = pd.Series(pd.to_numeric(col_data, errors='coerce'))  # 强制转换为数字，错误值变NaN，确保为 Series
             except:
-                col_data = np.array(col_data, dtype='float64')
+                col_series = pd.Series(np.array(col_data, dtype='float64'))
             
-            # 处理NaN值
-            #col_data = np.nan_to_num(col_data, nan=0.0)破坏了未分类项目，已放弃
-            
-            # 不再填充 NaN，直接保留 
-            # 创建张量
-            tensor = torch.tensor(col_data, dtype=torch.float32, device=self.device)
+            # 对特定列应用哨兵规则
+            # 对 type：把 >100 的异常值也视为未知并替换为哨兵
+            if selected_cols[col_idx] == 'type':
+                col_series = col_series.mask(col_series > 100, self.nan_sentinel)
+            # 全部 NaN 替换为哨兵（统一口径）
+            col_data_filled = col_series.fillna(self.nan_sentinel).values
+
+            # 创建张量（使用 float32）
+            tensor = torch.tensor(col_data_filled, dtype=torch.float32, device=self.device)
 
             tensors.append(tensor)
         
@@ -220,17 +226,17 @@ class TrafficFlowAnalyzer:
         """按类型代码筛选线段"""
         type_codes_tensor = torch.tensor(type_codes, dtype=torch.int16, device=intersect_lines.device)
         type_tensor = intersect_lines[:, type_col]
-        valid_mask = ~torch.isnan(type_tensor)
-        mask = valid_mask & torch.isin(type_tensor, type_codes_tensor)
-
+        #valid_mask = ~torch.isnan(type_tensor)
+        mask = torch.isin(type_tensor, type_codes_tensor)
+        '''valid_mask &'''
         return intersect_lines[mask]
     
     def filter_by_length(self, intersect_lines: torch.Tensor, min_len: int, max_len: int, length_col: int = 7) -> torch.Tensor:
         """按船长范围筛选线段"""
         length_tensor = intersect_lines[:, length_col]
-        valid_mask = ~torch.isnan(length_tensor)
-        mask = valid_mask & (length_tensor >= min_len) & (length_tensor <= max_len)
-
+        #valid_mask = ~torch.isnan(length_tensor)
+        mask =(length_tensor >= min_len) & (length_tensor <= max_len)
+        # valid_mask & 
         return intersect_lines[mask]
     
     def analyze(self):
@@ -288,9 +294,17 @@ class TrafficFlowAnalyzer:
             print("  按船型分类:")
             ship_type_stats = {}
             type_tensor = intersect_lines[:, 6]
-            known_type_mask = ~torch.isnan(type_tensor)
+            sentinel_val = float(self.nan_sentinel)
+            # known_type_mask 已弃用：使用哨兵值分类（-1），无需单独保存 known_type_mask
+            # known_type_mask = (type_tensor != sentinel_val)
 
             for ship_name, type_codes in ship_type_mapping.items():
+                # 跳过包含哨兵值的类别（例如 config 中的 '未知类型'），避免与后续单独统计的 '未知' 重复计数
+                if any(int(c) == self.nan_sentinel for c in type_codes):
+                    # 记录但不在这里计数，'未知' 将在下方统一统计
+                    print(f"    跳过类别（含哨兵）: {ship_name}")
+                    continue
+
                 filtered = self.filter_by_type_codes(intersect_lines, type_codes)
                 count = filtered.shape[0]
                 ship_type_stats[ship_name] = count
@@ -304,10 +318,10 @@ class TrafficFlowAnalyzer:
                     'count': count
                 })
 
-            unknown_type_count = torch.isnan(type_tensor).sum().item()
+            unknown_type_count = (type_tensor == sentinel_val).sum().item()
             ship_type_stats['未知'] = unknown_type_count
 
-            print(f"    未知船型: {unknown_type_count}")
+            print(f"    未知船型 (哨兵={self.nan_sentinel}): {unknown_type_count}")
             all_stats_list.append({
                 'section_id': section['id'],
                 'section_name': section['name'],
@@ -320,9 +334,15 @@ class TrafficFlowAnalyzer:
             print("  按船长分类:")
             length_stats = {}
             length_tensor = intersect_lines[:, 7]
-            known_length_mask = ~torch.isnan(length_tensor)
+            # known_length_mask 已弃用：使用哨兵值分类（-1），无需单独保存 known_length_mask
+            # known_length_mask = (length_tensor != sentinel_val)
 
             for cat in length_categories:
+                # 跳过专门用于标识哨兵的分类（例如 min == max == nan_sentinel），统一由 below 的 '未知' 处理
+                if cat.get('min') == cat.get('max') == self.nan_sentinel:
+                    print(f"    跳过长度分类（哨兵）: {cat.get('name')}")
+                    continue
+
                 filtered = self.filter_by_length(intersect_lines, cat['min'], cat['max'])
                 count = filtered.shape[0]
                 length_stats[cat['name']] = count
@@ -336,10 +356,10 @@ class TrafficFlowAnalyzer:
                     'count': count
                 })
 
-            unknown_length_count = torch.isnan(length_tensor).sum().item()
+            unknown_length_count = (length_tensor == sentinel_val).sum().item()
             length_stats['未知'] = unknown_length_count
 
-            print(f"    未知船长: {unknown_length_count}")
+            print(f"    未知船长 (哨兵={self.nan_sentinel}): {unknown_length_count}")
             all_stats_list.append({
                 'section_id': section['id'],
                 'section_name': section['name'],
@@ -348,7 +368,14 @@ class TrafficFlowAnalyzer:
                 'count': unknown_length_count
             })
 
-            
+            # 一致性检查：确认按船型/船长分类的合计是否等于总穿越数
+            total_by_type = sum(ship_type_stats.values())
+            if total_by_type != intersected_nums:
+                print(f"  ⚠️ 船型统计口径不一致: 合计={total_by_type} != 总穿越={intersected_nums}")
+            total_by_length = sum(length_stats.values())
+            if total_by_length != intersected_nums:
+                print(f"  ⚠️ 船长统计口径不一致: 合计={total_by_length} != 总穿越={intersected_nums}")
+
             result = {
                 'section_id': section['id'],
                 'section_name': section['name'],
