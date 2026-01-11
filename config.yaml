@@ -1,0 +1,86 @@
+# 2025年度交通流统计配置文件
+
+# 截面门线坐标定义
+cross_sections:
+  - id: 1
+    name: "一小时场址北侧及老铁山水道至成山角交通流"
+    point1:
+      lat: 37.885  # 37°53′06"N
+      lon: 121.995  # 121°59′42"E
+    point2:
+      lat: 37.985  # 37°59′06"N
+      lon: 122.0817  # 122°04′54"E
+    export_trajectories: true  # 按船长分类显示轨迹
+
+  - id: 2
+    name: "一小时场址北侧2海里交通流"
+    point1:
+      lat: 37.8694  # 37°52′10"N
+      lon: 122.0197  # 122°1′11"E
+    point2:
+      lat: 37.8958  # 37°53′45"N
+      lon: 122.0458  # 122°2′45"E
+    export_trajectories: false
+
+  - id: 3
+    name: "一小时场址南侧及成山角至长山水道交通流"
+    point1:
+      lat: 37.865  # 37°51′54"N
+      lon: 121.985  # 121°59′06"E
+    point2:
+      lat: 37.71  # 37°42′36"N
+      lon: 121.94  # 121°56′24"E
+    export_trajectories: true  # 按船长分类显示轨迹
+
+  - id: 4
+    name: "一小时场址南侧2海里交通流"
+    point1:
+      lat: 37.8317  # 37°49′54"N
+      lon: 121.99  # 121°59′24"E
+    point2:
+      lat: 37.88  # 37°52′48"N
+      lon: 122.0183  # 122°01′06"E
+    export_trajectories: false
+
+# 船舶类型分类 (AIS type code)
+# 仅保留任务需要的主要/危险类型，剩余代码统一视为“非运输船”
+ship_types:
+  货船: [70, 71, 72, 73, 74, 75, 76, 77, 78, 79]  # 货船类型
+  油船: [80, 81, 82, 83, 84, 85, 86, 87, 88, 89]  # 油轮类型
+  客船: [60, 61, 62, 63, 64, 65, 66, 67, 68, 69]  # 客船类型
+  渔船: [30]  # 渔船/捕鱼船
+  危险品船: [71, 72, 73, 74, 81, 82, 83, 84, 91, 92, 93, 94]  # A/B/C/D类危险品
+
+# 船长分类标准 (单位: 米)
+length_categories:
+  - name: "100米及以下"
+    min: 0
+    max: 100
+  - name: "101~200米"
+    min: 101
+    max: 200
+  - name: "201~300米"
+    min: 201
+    max: 300
+  - name: "301~370米"
+    min: 301
+    max: 370
+  - name: "371米以上"
+    min: 371
+    max: 10000
+
+# 数据文件路径
+data_files:
+  premerged_ais: "list/cleaned_ais.csv"
+
+# 输出设置
+output:
+  statistics_file: "output/traffic_statistics_x.csv"
+  trajectories_dir: "outputx"
+  
+# 处理参数
+processing:
+  use_cuda: true  # 是否使用CUDA加速
+  batch_size: 1000000  # 批处理大小
+  min_trajectory_points: 2  # 最少轨迹点数
+  non_standard_type_threshold: 100  # >=此值的类型代码视为非标准船舶类型代码
