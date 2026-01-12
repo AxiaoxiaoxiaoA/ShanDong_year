@@ -14,8 +14,6 @@ import os
 import argparse
 from folium.features import DivIcon
 import colorsys
-import yaml
-from pathlib import Path
 
 
 # =========================
@@ -117,12 +115,6 @@ def load_ais_csv(file_path: str) -> pd.DataFrame:
     # 去重
     df = df.drop_duplicates(subset=["mmsi", "timestamp", "lat", "lon"])
 
-    # 确保存在 'type' 列并为数值，缺失按 NaN 保留（后续映射为未知）
-    if 'type' in df.columns:
-        df['type'] = pd.to_numeric(df['type'], errors='coerce')
-    else:
-        df['type'] = np.nan
-
     return df
 
 
@@ -155,9 +147,9 @@ def classify_vessel_direction(df: pd.DataFrame) -> pd.DataFrame:
 # =========================
 # 地图绑定
 # =========================
-def add_vessel_legend(m, vessel_colors: dict, max_show: int = 20, title: str = '图例'):
-    """在地图上添加图例（键可以是 MMSI 或 船型标签）"""
-    legend_html = f'''
+def add_vessel_legend(m, vessel_colors: dict, max_show: int = 20):
+    """在地图上添加船只颜色图例"""
+    legend_html = '''
     <div style="position:  fixed; 
                 bottom: 50px; right: 10px; 
                 background-color:  white;
@@ -168,19 +160,19 @@ def add_vessel_legend(m, vessel_colors: dict, max_show: int = 20, title: str = '
                 font-size: 12px;
                 max-height:  400px;
                 overflow-y: auto;">
-    <b>{title}</b><br>
+    <b>船只图例 (MMSI)</b><br>
     '''
 
     items = list(vessel_colors.items())
-    for key, color in items[: max_show]:
-        legend_html += f'<span style="color:{color}; font-size: 16px;">■</span> {key}<br>'
+    for mmsi, color in items[: max_show]:
+        legend_html += f'<span style="color:{color}; font-size: 16px;">■</span> {mmsi}<br>'
 
     if len(items) > max_show:
-        legend_html += f'<i>... 共 {len(items)}</i><br>'
+        legend_html += f'<i>... 共 {len(items)} 艘船</i><br>'
 
     legend_html += '</div>'
 
-    m.get_root().html.add_child(folium.Element(legend_html))
+    m. get_root().html.add_child(folium.Element(legend_html))
 
 
 def add_section_lines(m, sections:  list, line_color: str = '#ff00ff', weight: int = 8, opacity: float = 1):
@@ -264,46 +256,15 @@ def create_point_map(df:  pd.DataFrame, output_html: str, show_sections: bool = 
     mmsi_list = df["mmsi"]. unique().tolist()
     n_vessels = len(mmsi_list)
 
-    # 按船型分配颜色（提高性能）：从配置读取 ship_types 与 nan_sentinel，并映射到 type_name
-    try:
-        cfg_path = Path(__file__).resolve().parents[2] / 'config.yaml'
-        with open(cfg_path, 'r', encoding='utf-8') as fh:
-            cfg = yaml.safe_load(fh)
-        ship_types_cfg = cfg.get('ship_types', {})
-        nan_sentinel = int(cfg.get('processing', {}).get('nan_sentinel', -1))
-    except Exception:
-        ship_types_cfg = {}
-        nan_sentinel = -1
+    print(f"🚢 共 {n_vessels} 艘船，正在分配颜色...")
 
-    # 构建 code -> type_name 映射
-    code_to_name = {}
-    for name, codes in ship_types_cfg.items():
-        for code in codes:
-            try:
-                code_to_name[int(code)] = name
-            except Exception:
-                continue
-    code_to_name[int(nan_sentinel)] = '未知'
-
-    # 映射每条记录的 type_name
-    df['type_name'] = df['type'].apply(lambda x: code_to_name.get(int(x), '未知') if pd.notna(x) else '未知')
-
-    # 每艘船的主要船型（mode）
-    mmsi_type = df.groupby('mmsi')['type_name'].agg(lambda s: s.mode().iat[0] if not s.mode().empty else s.iloc[0]).to_dict()
-
-    # 为每种类型分配颜色
-    types = sorted(df['type_name'].unique())
-    n_types = len(types)
-    if n_types <= len(PRESET_COLORS):
-        type_colors = {t: PRESET_COLORS[i] for i, t in enumerate(types)}
+    # 为每艘船分配独立颜色
+    if n_vessels <= len(PRESET_COLORS):
+        vessel_colors = {mmsi: PRESET_COLORS[i] for i, mmsi in enumerate(mmsi_list)}
     else:
-        generated = generate_distinct_colors(n_types)
-        type_colors = {t: generated[i] for i, t in enumerate(types)}
+        generated_colors = generate_distinct_colors(n_vessels)
+        vessel_colors = {mmsi: generated_colors[i] for i, mmsi in enumerate(mmsi_list)}
 
-    print(f"🚢 共 {n_vessels} 艘船，按船型分配颜色，共 {n_types} 类: {types}")
-
-    # 创建 mmsi -> color 映射（用于绘图便利）
-    vessel_colors = {mmsi: type_colors.get(mmsi_type.get(mmsi, '未知'), '#888888') for mmsi in mmsi_list}
     # 轨迹绘制
     for mmsi, g in df.groupby("mmsi"):
         g = g.sort_values("timestamp")

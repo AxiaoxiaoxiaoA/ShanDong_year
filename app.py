@@ -112,7 +112,7 @@ class TrafficFlowAnalyzer:
             col_data_filled = col_series.fillna(self.nan_sentinel).values
 
             # 创建张量（使用 float32）
-            tensor = torch.tensor(col_data_filled, dtype=torch.float32, device=self.device)
+            tensor = torch.tensor(col_data_filled, dtype=torch.float64, device=self.device)
 
             tensors.append(tensor)
         
@@ -126,21 +126,17 @@ class TrafficFlowAnalyzer:
         print(f"    [tensor_builder] 张量形状: {ais_tensor.shape}")
         ais_tensor = ais_tensor.to(self.device)
         return ais_tensor
-    def track_builder(self,ais_tensor):
-        #先按时间排序再按mmsi排序，构建完整轨迹
-        print("    [track_builder] 排序前张量形状:", ais_tensor.shape)
+    def track_builder(self, ais_tensor):
+        # 创建复合排序键：mmsi * 大数 + 归一化的time
+        time_normalized = (ais_tensor[:, 0] - ais_tensor[:, 0]. min()) / (ais_tensor[:, 0].max() - ais_tensor[:, 0].min() + 1e-10)
+        mmsi = ais_tensor[:, 1]
         
-        # 先按MMSI排序
-        indices = torch.argsort(ais_tensor[:, 1], stable=True)
-        sorted_by_mmsi = ais_tensor[indices]
-        del ais_tensor, indices
+        # 复合键：mmsi作为高位，time作为低位
+        sort_key = mmsi * 1e15 + time_normalized
         
-        # 再在每个MMSI组内按时间排序
-        indices = torch.argsort(sorted_by_mmsi[:, 0], stable=True)
-        sorted_ais = sorted_by_mmsi[indices]
-        del sorted_by_mmsi, indices
+        indices = torch.argsort(sort_key, stable=True)
+        sorted_ais = ais_tensor[indices]
         
-        print("    [track_builder] 排序后张量形状:", sorted_ais.shape)
         return sorted_ais
     def get_route_segments(self, final_sorted_nps_tensor, time_col=0, mmsi_col=1, lon_col=2, lat_col=3, type_col=4, length_col=5, width_col=6):
         print("    [get_route_segments] 输入张量形状:", final_sorted_nps_tensor.shape)
