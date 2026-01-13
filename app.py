@@ -104,10 +104,7 @@ class TrafficFlowAnalyzer:
             except:
                 col_series = pd.Series(np.array(col_data, dtype='float64'))
             
-            # 对特定列应用哨兵规则
-            # 对 type：把 >100 的异常值也视为未知并替换为哨兵
-            if selected_cols[col_idx] == 'type':
-                col_series = col_series.mask(col_series > 100, self.nan_sentinel)
+
             # 全部 NaN 替换为哨兵（统一口径）
             col_data_filled = col_series.fillna(self.nan_sentinel).values
 
@@ -228,7 +225,6 @@ class TrafficFlowAnalyzer:
         type_tensor = intersect_lines[:, type_col]
         #valid_mask = ~torch.isnan(type_tensor)
         mask = torch.isin(type_tensor, type_codes_tensor)
-        '''valid_mask &'''
         return intersect_lines[mask]
     
     def filter_by_length(self, intersect_lines: torch.Tensor, min_len: int, max_len: int, length_col: int = 7) -> torch.Tensor:
@@ -236,7 +232,6 @@ class TrafficFlowAnalyzer:
         length_tensor = intersect_lines[:, length_col]
         #valid_mask = ~torch.isnan(length_tensor)
         mask =(length_tensor >= min_len) & (length_tensor <= max_len)
-        # valid_mask & 
         return intersect_lines[mask]
     
     def analyze(self):
@@ -371,10 +366,10 @@ class TrafficFlowAnalyzer:
             # 一致性检查：确认按船型/船长分类的合计是否等于总穿越数
             total_by_type = sum(ship_type_stats.values())
             if total_by_type != intersected_nums:
-                print(f"  ⚠️ 船型统计口径不一致: 合计={total_by_type} != 总穿越={intersected_nums}")
+                print(f"  船型统计口径不一致: 合计={total_by_type} != 总穿越={intersected_nums}")
             total_by_length = sum(length_stats.values())
             if total_by_length != intersected_nums:
-                print(f"  ⚠️ 船长统计口径不一致: 合计={total_by_length} != 总穿越={intersected_nums}")
+                print(f"  船长统计口径不一致: 合计={total_by_length} != 总穿越={intersected_nums}")
 
             result = {
                 'section_id': section['id'],
@@ -398,7 +393,7 @@ class TrafficFlowAnalyzer:
         self._save_statistics(results, all_stats_list, output_dir)
         
         print("\n" + "="*60)
-        print("统计完成！")
+        print("统计完成")
         print("="*60)
         
         return results
@@ -411,7 +406,7 @@ class TrafficFlowAnalyzer:
         
         # 保存完整统计CSV
         stats_csv_path = output_dir / "traffic_statistics.csv"
-        stats_df.to_csv(stats_csv_path, index=False, encoding='utf-8-sig')
+        stats_df.to_csv(stats_csv_path, index=False)
         print(f"\n✓ 统计数据已保存: {stats_csv_path}")
         
         # 为每个截面生成图表
